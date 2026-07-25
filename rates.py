@@ -1,108 +1,99 @@
-"""Category -> asset list -> asset detail -> history browsing flow.
+"""Read-only queries over verified published rate history.
 
-This is the bot's core "just show me the verified data" feature — every
-handler here reads exclusively through `history/rates.py`, never
-constructing its own query against `PublishedRate`/`RawReading`.
+This is the ONLY module the Telegram bot's handlers should import from to
+display prices — handlers must never construct their own SQLAlchemy
+queries against `PublishedRate` or (especially) `RawReading` directly,
+both to keep the "AI/bot only reads published data" rule enforced in one
+place and so caching (see `get_current_rate`) is applied consistently.
 """
 
 from __future__ import annotations
 
-from datetime import timedelta
+import uuid
+from datetime import datetime
 
-from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.formatting import format_asset_detail, format_history_line
-from bot.keyboards.menus import (
-    CB_ASSET,
-    CB_BACK_MAIN,
-    CB_CATEGORY,
-    CB_HISTORY,
-    asset_detail_keyboard,
-    asset_list_keyboard,
-    back_to_main_keyboard,
-    main_menu_keyboard,
-)
-from core.enums import AssetCategory
+from core.enums import PublicationStatus
 from core.logging import get_logger
-from core.time import now_utc
-from history.rates import get_asset_by_code, get_current_rate, get_historical_rates, list_active_assets
+from core.models import Asset, PublishedRate
+from core.redis_client import get_redis, rate_cache_key
 
 log = get_logger(__name__)
 
-router = Router(name="rates")
 
-_WELCOME_TEXT = (
-    "👋 بەخێربێیت بۆ بۆتی دارایی کوردستان!\n\n" "لە خوارەوە بەشێک هەڵبژێرە:"
-)
-
-
-@router.callback_query(F.data == CB_BACK_MAIN)
-async def handle_back_to_main(callback: CallbackQuery) -> None:
-    await callback.message.edit_text(_WELCOME_TEXT, reply_markup=main_menu_keyboard())
-    await callback.answer()
+async def get_asset_by_code(session: AsyncSession, code: str) -> Asset | None:
+    return (
+        await session.execute(select(Asset).where(Asset.code == code))
+    ).scalar_one_or_none()
 
 
-@router.callback_query(F.data.startswith(f"{CB_CATEGORY}:"))
-async def handle_category_selected(callback: CallbackQuery, session: AsyncSession) -> None:
-    category_value = callback.data.split(":", 1)[1]
-    try:
-        category = AssetCategory(category_value)
-    except ValueError:
-        await callback.answer("Unknown category", show_alert=True)
-        return
+async def list_active_assets(session: AsyncSession, category: str | None = None) -> list[Asset]:
+    query = select(Asset).where(Asset.is_active.is_(True)).order_by(Asset.sort_order)
+    if category is not None:
+        query = query.where(Asset.category == category)
+    return list((await session.execute(query)).scalars().all())
 
-    assets = await list_active_assets(session, category=category)
-    if not assets:
-        await callback.answer("هیچ شتێک لەم بەشەدا نییە.", show_alert=True)
-        return
 
-    await callback.message.edit_text(
-        f"بەشی هەڵبژێردراو — یەکێک هەڵبژێرە بۆ بینینی نرخ:",
-        reply_markup=asset_list_keyboard(assets),
+async def get_current_rate(session: AsyncSession, asset: Asset) -> PublishedRate | None:
+    """Latest published rate for one asset.
+
+    Callers needing low-latency reads (bot handlers on the hot path)
+    should prefer reading straight from the Redis cache
+    (`core.redis_client.rate_cache_key`) which `reconciliation.publisher`
+    keeps fresh; this function is the Postgres-backed fallback/source of
+    truth used when the cache is empty (e.g. right after a Redis restart)
+    or for any query beyond "the single latest value".
+    """
+    return (
+        await session.execute(
+            select(PublishedRate)
+            .where(
+                PublishedRate.asset_id == asset.id,
+                PublishedRate.status == PublicationStatus.PUBLISHED,
+            )
+            .order_by(PublishedRate.effective_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def get_historical_rates(
+    session: AsyncSession,
+    asset: Asset,
+    *,
+    since: datetime,
+    until: datetime | None = None,
+    limit: int = 500,
+) -> list[PublishedRate]:
+    """Published (verified only) rate history for one asset in a time
+    window, most recent first. Used by the bot's "Historical data"
+    feature (see bot/handlers/currencies.py)."""
+    query = (
+        select(PublishedRate)
+        .where(
+            PublishedRate.asset_id == asset.id,
+            PublishedRate.status == PublicationStatus.PUBLISHED,
+            PublishedRate.effective_at >= since,
+        )
+        .order_by(PublishedRate.effective_at.desc())
+        .limit(limit)
     )
-    await callback.answer()
+    if until is not None:
+        query = query.where(PublishedRate.effective_at <= until)
+
+    return list((await session.execute(query)).scalars().all())
 
 
-@router.callback_query(F.data.startswith(f"{CB_ASSET}:"))
-async def handle_asset_selected(callback: CallbackQuery, session: AsyncSession) -> None:
-    asset_code = callback.data.split(":", 1)[1]
-    asset = await get_asset_by_code(session, asset_code)
-    if asset is None:
-        await callback.answer("Asset not found", show_alert=True)
-        return
-
-    rate = await get_current_rate(session, asset)
-    text = format_asset_detail(asset, rate)
-
-    await callback.message.edit_text(
-        text, reply_markup=asset_detail_keyboard(asset), parse_mode="Markdown"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith(f"{CB_HISTORY}:"))
-async def handle_history_requested(callback: CallbackQuery, session: AsyncSession) -> None:
-    asset_code = callback.data.split(":", 1)[1]
-    asset = await get_asset_by_code(session, asset_code)
-    if asset is None:
-        await callback.answer("Asset not found", show_alert=True)
-        return
-
-    since = now_utc() - timedelta(days=7)
-    history = await get_historical_rates(session, asset, since=since, limit=15)
-
-    if not history:
-        await callback.answer("هیچ مێژوویەک بەردەست نییە.", show_alert=True)
-        return
-
-    lines = [f"*مێژووی {asset.name_ckb} (٧ ڕۆژی ڕابردوو)*", ""]
-    lines.extend(format_history_line(r) for r in history)
-
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=back_to_main_keyboard(),
-        parse_mode="Markdown",
-    )
-    await callback.answer()
+async def get_all_current_rates(session: AsyncSession) -> dict[str, PublishedRate]:
+    """Latest published rate for every active asset, keyed by asset code.
+    Used by the AI daily summary generator, which needs a full snapshot of
+    "today's market" across every category in one call."""
+    assets = await list_active_assets(session)
+    result: dict[str, PublishedRate] = {}
+    for asset in assets:
+        rate = await get_current_rate(session, asset)
+        if rate is not None:
+            result[asset.code] = rate
+    return result
