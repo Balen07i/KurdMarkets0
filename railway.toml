@@ -1,19 +1,10 @@
-# Railway configuration — this file configures the default (bot) service.
-# The worker/scheduler runs as a SEPARATE Railway service pointed at the same
-# repo, with its start command overridden in the Railway dashboard to:
-#   python -m worker.main
-# (see docs/DEPLOYMENT.md for full step-by-step instructions).
-
 [build]
-builder = "NIXPACKS"
-buildCommand = "pip install -r requirements.txt"
+builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "python -m bot.main"
+startCommand = "python bot.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-healthcheckPath = "/health"
-healthcheckTimeout = 30
 
 [env]
 PYTHONUNBUFFERED = "1"
