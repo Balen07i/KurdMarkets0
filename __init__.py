@@ -1,8 +1,9 @@
-"""Telegram bot — the user-facing service.
+"""Monitoring — admin alerting and health checks.
 
-Runs as its own Railway service (see railway.toml). The bot NEVER
-scrapes, NEVER talks to providers, and NEVER writes RawReading/
-PublishedRate rows — it only reads verified data via `history/rates.py`
-and `history/ai_summary.py`, and writes its own tables (`users`,
-`alerts`).
+Covers the four failure modes called out in the product spec: a scraper
+fails, data becomes stale, a source changes (i.e. starts consistently
+failing to parse), or reconciliation fails (flags a rate for review).
+`notifier.py` handles delivery (Telegram DM to configured admins, with
+dedup so a repeated failure doesn't spam); `health.py` implements the
+staleness/source-health checks the worker runs on a schedule.
 """
