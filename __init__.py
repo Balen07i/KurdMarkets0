@@ -1,9 +1,8 @@
-"""Monitoring — admin alerting and health checks.
+"""Reconciliation — turns multiple independent RawReadings into exactly one
+verified PublishedRate (or flags them for admin review).
 
-Covers the four failure modes called out in the product spec: a scraper
-fails, data becomes stale, a source changes (i.e. starts consistently
-failing to parse), or reconciliation fails (flags a rate for review).
-`notifier.py` handles delivery (Telegram DM to configured admins, with
-dedup so a repeated failure doesn't spam); `health.py` implements the
-staleness/source-health checks the worker runs on a schedule.
+This is the ONLY code path allowed to create `PublishedRate` rows. See
+`engine.py` for the verification strategy (weighted median, tolerance
+bands, confidence scoring) and `publisher.py` for the persistence +
+alert-triggering side effects of a successful publication.
 """
