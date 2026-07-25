@@ -1,0 +1,38 @@
+[project]
+name = "kurdistan-finance"
+version = "0.1.0"
+description = "Trusted financial intelligence Telegram bot for Iraq and the Kurdistan Region"
+requires-python = ">=3.11,<3.14"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=. --cov-report=term-missing --cov-config=pyproject.toml"
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "alembic/*",
+    "*/__init__.py",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "bot", "worker", "providers", "reconciliation", "monitoring", "history"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = ["alembic/versions"]
