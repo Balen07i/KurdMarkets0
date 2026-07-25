@@ -1,8 +1,9 @@
-"""Reconciliation — turns multiple independent RawReadings into exactly one
-verified PublishedRate (or flags them for admin review).
+"""Worker — the scheduler/background-job service.
 
-This is the ONLY code path allowed to create `PublishedRate` rows. See
-`engine.py` for the verification strategy (weighted median, tolerance
-bands, confidence scoring) and `publisher.py` for the persistence +
-alert-triggering side effects of a successful publication.
+Runs as a SEPARATE Railway service from the Telegram bot (see
+railway.toml / Procfile). Owns all scraping, reconciliation, alert
+checking, health monitoring, and AI summary generation. The bot process
+never imports from `worker` and never talks to providers/scrapers
+directly — see core/db.py's `PublishedRate` / Redis cache as the only
+handoff point between the two services.
 """
