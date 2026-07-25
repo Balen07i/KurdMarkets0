@@ -1,8 +1,8 @@
-"""Reconciliation — turns multiple independent RawReadings into exactly one
-verified PublishedRate (or flags them for admin review).
+"""Telegram bot — the user-facing service.
 
-This is the ONLY code path allowed to create `PublishedRate` rows. See
-`engine.py` for the verification strategy (weighted median, tolerance
-bands, confidence scoring) and `publisher.py` for the persistence +
-alert-triggering side effects of a successful publication.
+Runs as its own Railway service (see railway.toml). The bot NEVER
+scrapes, NEVER talks to providers, and NEVER writes RawReading/
+PublishedRate rows — it only reads verified data via `history/rates.py`
+and `history/ai_summary.py`, and writes its own tables (`users`,
+`alerts`).
 """
